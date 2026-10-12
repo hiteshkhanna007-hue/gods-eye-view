@@ -27,6 +27,12 @@ let _openskyCacheSourceEpochMs = null;
 const OPENSKY_CACHE_MS = 9000;
 /** Per-attempt limit for the global snapshot; it normally arrives in ~1.5 s. */
 const OPENSKY_ATTEMPT_TIMEOUT_MS = 10_000;
+/**
+ * After OpenSky is unreachable (timeouts, refused connections — it blocks many
+ * cloud-provider addresses), skip it this long so each poll goes straight to
+ * the cache or adsb.lol fallback instead of waiting out two timed-out attempts.
+ */
+const OPENSKY_UNREACHABLE_COOLDOWN_MS = 120_000;
 const OPENSKY_STATES_URL =
   'https://opensky-network.org/api/states/all?extended=1';
 
@@ -675,6 +681,10 @@ export function openSkyProxy() {
         res.end(body);
       } catch (e) {
         console.error('[OpenSky Proxy]', e.message);
+        _openskyCooldownUntil = Math.max(
+          _openskyCooldownUntil,
+          Date.now() + OPENSKY_UNREACHABLE_COOLDOWN_MS,
+        );
         if (_openskyCacheBody) {
           const cachedMeta = _openskyCacheMeta || {
             requestedMode: normalizeOpenSkyAuthMode(
