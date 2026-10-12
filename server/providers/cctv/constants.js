@@ -275,6 +275,19 @@ export const DELDOT_ANCHORS = [
   { lat: 39.1582, lon: -75.5244 }, // Dover (Kent)
   { lat: 38.6906, lon: -75.3877 }, // Georgetown (Sussex)
 ];
+/** NZ Transport Agency Waka Kotahi: keyless REST v4 camera list (XML). Frames
+ * are stills on the same host, refreshed upstream about every 30-60 s. */
+export const DEFAULT_NZTA_CAMERAS_URL =
+  'https://trafficnz.info/service/traffic/rest/4/cameras/all';
+export const NZTA_IMAGE_ORIGIN = 'https://trafficnz.info/';
+export const DEFAULT_NZTA_MAX_SOURCES = 300;
+export const NZTA_MAX_CATALOG_BYTES = 4 * 1024 * 1024;
+export const NZTA_ANCHORS = [
+  { lat: -36.8485, lon: 174.7633 }, // Auckland
+  { lat: -41.2865, lon: 174.7762 }, // Wellington
+  { lat: -43.5321, lon: 172.6362 }, // Christchurch
+  { lat: -37.787, lon: 175.2793 }, // Hamilton
+];
 /** Camera CATALOGS change rarely; 15 min keeps multi-megabyte upstream list refetches (Austin rows.json + 4 Caltrans districts + TfL + Ontario 511) infrequent. Frames are fetched per-request and are unaffected. */
 export const CCTV_SOURCE_CACHE_MS = 15 * 60 * 1000;
 /** Per-provider catalog-fetch timeout. Bounds the worst-case refresh so one

@@ -65,6 +65,11 @@ import {
   DEFAULT_VEGVESEN_MAX_SOURCES,
   VEGVESEN_MAX_CATALOG_BYTES,
   NORWAY_ANCHORS,
+  DEFAULT_NZTA_CAMERAS_URL,
+  NZTA_IMAGE_ORIGIN,
+  DEFAULT_NZTA_MAX_SOURCES,
+  NZTA_MAX_CATALOG_BYTES,
+  NZTA_ANCHORS,
 } from './constants.js';
 import {
   toFiniteNumber,
@@ -83,12 +88,16 @@ import {
   isLikelyNswCoordinate,
   isLikelyCalgaryCoordinate,
   isLikelyNorwayCoordinate,
+  isLikelyNzCoordinate,
   cameraDisplayCode,
   rowArrayToObject,
   prioritizeSources,
 } from './normalize.js';
 import { directionToHeading } from '../../../src/data/directionText.js';
-import { readResponseJsonCapped } from '../common/http.js';
+import {
+  readResponseJsonCapped,
+  readResponseTextCapped,
+} from '../common/http.js';
 /**
  * Fetch and parse Austin traffic camera records from the city Open Data portal.
  *
@@ -1860,6 +1869,129 @@ export async function loadVegvesenSourcesFromOpenData() {
       '[CCTV] Vegvesen camera download error:',
       error?.message || error,
     );
+    return [];
+  }
+}
+
+const XML_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+
+/**
+ * Text of the first `<tag>` directly in an NZTA camera block, entity-decoded.
+ *
+ * @param {string} block
+ * @param {string} tag
+ * @returns {string}
+ */
+function nztaXmlText(block, tag) {
+  const match = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(block);
+  if (!match) return '';
+  return match[1]
+    .replace(/&(amp|lt|gt|quot|apos);/g, (_, name) => XML_ENTITIES[name])
+    .trim();
+}
+
+/**
+ * Parse the NZTA REST v4 camera list into catalog sources. Offline and
+ * under-maintenance cameras are skipped; frame paths must be plain
+ * `/camera/<file>` paths on the NZTA host.
+ *
+ * @param {string} xml - Body of /service/traffic/rest/4/cameras/all.
+ * @returns {Array<object>}
+ */
+export function parseNztaCameras(xml) {
+  const cameras = [];
+  const blockRe = /<camera>([\s\S]*?)<\/camera>/g;
+  let match;
+  while ((match = blockRe.exec(String(xml || ''))) !== null) {
+    // Cameras nest <journey>/<journeyLeg> elements with their own <name> and
+    // <id>; drop them so the camera's own fields are read.
+    const block = match[1]
+      .replace(/<journey>[\s\S]*?<\/journey>/g, '')
+      .replace(/<journeyLeg>[\s\S]*?<\/journeyLeg>/g, '');
+    if (
+      nztaXmlText(block, 'offline') === 'true' ||
+      nztaXmlText(block, 'underMaintenance') === 'true'
+    )
+      continue;
+    const rawId = nztaXmlText(block, 'id');
+    const lat = toFiniteNumber(nztaXmlText(block, 'latitude'));
+    const lon = toFiniteNumber(nztaXmlText(block, 'longitude'));
+    const imagePath = nztaXmlText(block, 'imageUrl');
+    if (!/^\d+$/.test(rawId)) continue;
+    if (!isLikelyNzCoordinate(lat, lon)) continue;
+    if (!/^\/camera\/[\w-]+\.jpe?g$/i.test(imagePath)) continue;
+    const url = `${NZTA_IMAGE_ORIGIN}${imagePath.slice(1)}`;
+    const heading = directionToHeading(nztaXmlText(block, 'direction'), true);
+    const hasHeading = Number.isFinite(heading);
+    const cameraId = `nz-${rawId}`;
+    const region = nztaXmlText(block, 'region');
+    const name = nztaXmlText(block, 'name');
+    cameras.push({
+      id: cameraId,
+      name: nztaXmlText(block, 'description') || name || `NZTA ${rawId}`,
+      city: region ? `${region}, New Zealand` : 'New Zealand',
+      cityId: 'nz',
+      provider: 'NZ Transport Agency Waka Kotahi',
+      lat,
+      lon,
+      headingDeg: hasHeading ? heading : fallbackHeadingFromId(cameraId),
+      headingConfidence: hasHeading ? 'high' : 'low',
+      pitchDeg: hasHeading ? -22 : -18,
+      fovDeg: hasHeading ? 56 : 44,
+      rangeM: hasHeading ? 220 : 150,
+      mountHeightM: 9,
+      feedType: 'image',
+      url,
+      snapshotUrl: url,
+      sourceKind: 'nzta-open-data',
+      license:
+        'NZ Transport Agency Waka Kotahi (no published licence; credited)',
+      code: cameraDisplayCode(name.toUpperCase() || rawId),
+    });
+  }
+  return cameras;
+}
+
+/**
+ * Fetch NZ Transport Agency Waka Kotahi traffic cameras (New Zealand state
+ * highways), keyless: the trafficnz.info REST v4 camera list.
+ *
+ * @returns {Promise<Array<object>>} Normalized camera source objects.
+ */
+export async function loadNztaSourcesFromOpenData() {
+  try {
+    const endpoint = process.env.CCTV_NZTA_URL || DEFAULT_NZTA_CAMERAS_URL;
+    const resp = await fetch(endpoint, {
+      headers: {
+        Accept: 'application/xml,text/xml',
+        'User-Agent': 'gods-eye-view-cctv-proxy/1.0',
+      },
+      signal: AbortSignal.timeout(CCTV_SOURCE_FETCH_TIMEOUT_MS),
+    });
+    if (!resp.ok) {
+      console.warn('[CCTV] NZTA camera download failed:', resp.status);
+      try {
+        await resp.body?.cancel();
+      } catch {
+        /* no-op */
+      }
+      return [];
+    }
+    const xml = await readResponseTextCapped(resp, NZTA_MAX_CATALOG_BYTES);
+    const cameras = parseNztaCameras(xml);
+    const maxRaw = Number(
+      process.env.CCTV_NZTA_MAX_SOURCES || DEFAULT_NZTA_MAX_SOURCES,
+    );
+    const maxCount = Number.isFinite(maxRaw)
+      ? Math.max(8, Math.min(1000, Math.floor(maxRaw)))
+      : DEFAULT_NZTA_MAX_SOURCES;
+    const prioritized = prioritizeSources(cameras, maxCount, NZTA_ANCHORS);
+    console.log(
+      `[CCTV] Loaded NZTA camera sources: ${cameras.length} online (using nearest ${prioritized.length})`,
+    );
+    return prioritized;
+  } catch (error) {
+    console.warn('[CCTV] NZTA camera download error:', error?.message || error);
     return [];
   }
 }

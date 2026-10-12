@@ -352,6 +352,12 @@ export const DATA_CREDITS = [
       '(<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>)',
   },
   {
+    key: 'nzta-cctv',
+    html:
+      'Traffic cameras &amp; frames (New Zealand): ' +
+      '<a href="https://www.journeys.nzta.govt.nz/traffic-cameras" target="_blank" rel="noopener">NZ Transport Agency Waka Kotahi</a>',
+  },
+  {
     key: 'telegeography',
     html:
       'Submarine cables: © TeleGeography — ' +

@@ -356,6 +356,17 @@ export function isLikelyNswCoordinate(lat, lon) {
   );
 }
 
+/** New Zealand bounding box (North, South and Stewart Islands). */
+export function isLikelyNzCoordinate(lat, lon) {
+  return (
+    isPlausibleLatLon(lat, lon) &&
+    lat >= -47.5 &&
+    lat <= -34 &&
+    lon >= 166 &&
+    lon <= 178.8
+  );
+}
+
 /** Calgary's municipal extent, with slack for the ring road. */
 export function isLikelyCalgaryCoordinate(lat, lon) {
   return (
